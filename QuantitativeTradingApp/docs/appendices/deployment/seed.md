@@ -7,7 +7,8 @@
 ## 内容
 
 - **admin 测试用户**：`admin` / `***REMOVED***`，密码 bcrypt 哈希入库。
-- **2~3 个示例用户**：含各自持仓（user_positions）与偏好（user_preferences），便于验证模块三个性化建议。
+- **2~3 个示例用户**：`alice` / `***REMOVED***`、`bob` / `***REMOVED***`，含各自持仓（user_positions）与偏好（user_preferences，risk_level + total_capital），便于验证模块三个性化建议。
+- 脚本末尾补充 **SEED_STOCKS**（若库中不存在），供搜索/持仓录入演示。
 
 ## 约束
 

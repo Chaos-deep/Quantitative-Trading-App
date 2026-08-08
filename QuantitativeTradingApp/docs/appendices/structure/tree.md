@@ -5,7 +5,8 @@
 ## 项目目录树
 
 ```
-opencode_workspace/
+QuantitativeTradingApp/
+├── .gitignore
 ├── docs/
 │   ├── design.md                    # 本文档（主文档）
 │   └── appendices/                  # 分层附录
@@ -21,12 +22,13 @@ opencode_workspace/
 │   ├── Dockerfile
 │   ├── pyproject.toml / requirements.txt
 │   ├── alembic/
-│   │   └── versions/              # 数据库迁移文件
+│   │   ├── env.py
+│   │   └── versions/              # 数据库迁移文件（初始迁移 init_schema）
 │   ├── seed.py                    # 种子脚本（admin 测试用户 + 示例用户/持仓/偏好）
 │   ├── app/
-│   │   ├── main.py                # FastAPI 入口
+│   │   ├── main.py                # FastAPI 入口（lifespan 启停调度 + 429/Retry-After + X-Request-ID）
 │   │   ├── core/                  # config(Pydantic Settings)/security/redis_client/dependencies（限流+XFF）
-│   │   ├── api/                   # 路由（auth/recommendations/stocks/positions/preferences/health）
+│   │   ├── api/                   # 路由（auth/recommendations/stocks/user_data）
 │   │   ├── models/                # SQLAlchemy 模型（含 user_positions 等）
 │   │   ├── schemas/               # Pydantic 模型
 │   │   ├── services/              # 业务逻辑
@@ -41,8 +43,8 @@ opencode_workspace/
 │   │   │   ├── bollinger_reversion.py  # 布林带均值回归
 │   │   │   └── config.py          # 策略参数外置
 │   │   └── utils/                 # 日志、日期工具
-│   ├── tests/
-│   └── requirements.txt
+│   ├── tests/                     # pytest（conftest + 21 用例，SQLite 内存 + fakeredis）
+│   └── requirements.txt / requirements-dev.txt
 ├── web-app/
 │   ├── Dockerfile
 │   ├── package.json

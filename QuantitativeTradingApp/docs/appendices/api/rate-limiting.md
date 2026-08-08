@@ -12,7 +12,16 @@
 | GET /api/recommendations/global | 每用户每分钟 60 次 | 防爬虫全量拉取 |
 | GET /api/recommendations/personal | 每用户每分钟 60 次 | 防爬虫全量拉取 |
 
-- 限流触发返回 **HTTP 429**（含 `Retry-After` 响应头）。
+- 限流触发返回 **HTTP 429**（含 `Retry-After` 响应头，值为窗口重置前的剩余秒数）。
+
+## 实现注意（与代码同步）
+
+- 依赖 `slowapi`。限流按 **IP**（登录）或 **用户**（推荐接口）为 key：
+  - 登录：`ip:{真实客户端IP}`。
+  - 推荐：`user:{user_id}`；解析不到 token 时降级为 IP key。
+- **装饰器顺序**：`@router.get/post(...)` 必须在外层，`@limiter.limit(...)` 紧贴函数体；顺序颠倒会导致路由注册失败。
+- `slowapi` 的响应头注入（`headers_enabled=True`）要求端点返回 `starlette.Response`，与本项目返回 Pydantic 模型/dict 的写法不兼容，故**关闭该选项**；`Retry-After` 在 429 异常处理器中用 `limiter.get_window_stats` 手动计算。
+- 可通过环境变量 `RATE_LIMIT_ENABLED=false` 临时关闭（测试/压测），`RATE_LIMIT_STORAGE` 可覆盖计数存储（如 `memory://`）。
 
 ## IP 识别（XFF 信任）
 
