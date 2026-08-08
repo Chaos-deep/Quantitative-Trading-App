@@ -1,6 +1,6 @@
 # 附录 · API · 用户数据与元信息
 
-> 主文档：../../design.md · 版本随 v0.4 同步
+> 主文档：../../design.md · 版本随 v0.5 同步
 
 ## POST /api/positions
 

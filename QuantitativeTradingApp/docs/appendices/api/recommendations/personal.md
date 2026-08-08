@@ -1,6 +1,6 @@
 # 附录 · API · 个性化建议
 
-> 主文档：../../design.md · 版本随 v0.4 同步
+> 主文档：../../../design.md · 版本随 v0.5 同步
 
 ## GET /api/recommendations/personal
 
@@ -18,6 +18,9 @@
       "action": "BUY",
       "suggested_shares": 200,
       "close": 8.15,
+      "strategy_signals": [
+        {"strategy": "turtle", "signal": "BUY"}
+      ],
       "reason": "您未持有该股，今日海龟策略出现买入信号，建议按资金 5% 仓位买入 200 股"
     },
     {
@@ -27,6 +30,10 @@
       "action": "SELL",
       "suggested_shares": 1000,
       "close": 11.20,
+      "strategy_signals": [
+        {"strategy": "turtle", "signal": "BUY"},
+        {"strategy": "bollinger_mean_reversion", "signal": "AVOID"}
+      ],
       "reason": "您已持有该股，今日布林策略出现卖出信号，建议清仓全部 1000 股"
     }
   ],
@@ -52,6 +59,6 @@ ORDER BY CASE WHEN action='BUY' THEN 0
 ### 说明
 
 - 限流：每用户每分钟 60 次（见 [限流](../rate-limiting.md)）。
-- `suggested_shares` 计算规则见 [模块三](../../design.md)。
+- `suggested_shares` 计算规则见 [模块三](../../../design.md)。
 
 [← 返回 design.md](../../../design.md)

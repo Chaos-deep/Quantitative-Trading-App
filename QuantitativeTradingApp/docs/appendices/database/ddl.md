@@ -1,6 +1,6 @@
 # 附录 · 数据库 · DDL（建表语句）
 
-> 主文档：../../design.md · 版本随 v0.4 同步
+> 主文档：../../design.md · 版本随 v0.5 同步
 
 以下为 PostgreSQL 建表语句，命名全部采用 `snake_case`，索引按「`idx_` + 用途」命名。
 
@@ -30,7 +30,7 @@ CREATE TABLE daily_bars (
     high       NUMERIC(12,4) NOT NULL,
     low        NUMERIC(12,4) NOT NULL,
     close      NUMERIC(12,4) NOT NULL,
-    volume     NUMERIC(20,0) NOT NULL,             -- 单位：手
+    volume     NUMERIC(20,0) NOT NULL,             -- 单位：手（对齐 akshare 数据源）
     amount     NUMERIC(20,2),
     PRIMARY KEY (stock_code, date)
 );
@@ -69,7 +69,7 @@ CREATE TABLE user_positions (
     id         BIGSERIAL PRIMARY KEY,
     user_id    BIGINT NOT NULL REFERENCES users(id),
     stock_code VARCHAR(16) NOT NULL REFERENCES stocks(code),
-    shares     INT NOT NULL,                       -- 持有股数（单位：股）
+    shares     INT NOT NULL,                       -- 持有股数（单位：股，1 手 = 100 股）
     cost_price NUMERIC(12,4),
     buy_date   DATE,
     UNIQUE (user_id, stock_code)
@@ -92,6 +92,7 @@ CREATE TABLE user_personal_advice (
     action           VARCHAR(8) NOT NULL,          -- BUY/SELL/HOLD
     suggested_shares INT NOT NULL,                 -- BUY=加仓/买入量，SELL=清仓量，HOLD=0
     reason           TEXT,
+    strategy_signals JSONB NOT NULL DEFAULT '[]',  -- [{"strategy":"turtle","signal":"BUY"},...] 聚合前各策略原始信号
     UNIQUE (user_id, stock_code, advice_date)
 );
 CREATE INDEX idx_advice_user_date_action ON user_personal_advice (user_id, advice_date, action);

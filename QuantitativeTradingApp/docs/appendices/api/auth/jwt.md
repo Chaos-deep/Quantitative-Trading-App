@@ -1,6 +1,6 @@
 # 附录 · API · 认证（JWT 令牌模型）
 
-> 主文档：../../design.md · 版本随 v0.4 同步
+> 主文档：../../../design.md · 版本随 v0.5 同步
 
 ## 令牌模型
 
@@ -36,11 +36,21 @@
 - 验签时 `ver` 不匹配即拒绝，一次性作废该用户全部已签发 token。
 - 用于密码修改 / 账号异常等场景。
 
+## 刷新严格检查顺序（必须按序执行）
+
+`POST /api/auth/refresh` 内部必须严格按以下顺序执行，**顺序不可颠倒**（`ver` 的校验不能漏检）：
+
+1. **验签**（签名无效 → 401）。
+2. **解码提取** `jti` 与 `ver`。
+3. **查 Redis 黑名单** `refresh_token:{jti}` → **存在即拒绝**（该 refresh 已吊销）。
+4. **查 `user:{id}:token_version` 是否等于 `ver`** → 不等则**立即拒绝**（返回 401，该用户 token 已被全设备作废）。
+5. **全部通过** → 签发新 access + 新 refresh（新 `jti`），并将**旧 `jti` 写入黑名单**（防重放）。
+
 ## 完整流程
 
 1. 注册 → 密码 bcrypt 哈希入库。
 2. 登录 → 校验密码 → 签发 JWT（access 30 分钟 + refresh 7 天，refresh 携带唯一 `jti`）。
-3. 刷新 → 先验签，再查 Redis 黑名单 `refresh_token:{jti}`：**命中即拒绝**；未命中放行，签发新 access + 新 refresh，旧 `jti` 写入黑名单。
+3. 刷新 → 严格按「刷新严格检查顺序」五步执行（见上节）。
 4. 登出 → 提取 refresh 的 `jti` 写入黑名单，该设备 Refresh Token 立即失效；Access Token 因 30 分钟自然过期而失效。
 
 [← 返回 design.md](../../../design.md)

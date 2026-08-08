@@ -1,6 +1,6 @@
 # 附录 · API · 认证端点
 
-> 主文档：../../design.md · 版本随 v0.4 同步
+> 主文档：../../../design.md · 版本随 v0.5 同步
 
 Base URL：`/api`。除登录/注册/健康检查外均需 `Authorization: Bearer <token>`。
 
