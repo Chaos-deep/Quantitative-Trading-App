@@ -1,11 +1,13 @@
 # A股量化选股系统 · 设计文档
 
+> **Agent 使用指引**：本文档为系统唯一主文档。正文 §1-§7 与附录 `appendices/database/`、`appendices/api/`、`appendices/pipeline/` 构成**最低可执行子集**（后端骨架可直接按此交付）；前端、部署、目录、风险与策略参考按需查阅对应附录。所有附录文件页眉标注「版本随 v0.4 同步」，与本主文档保持一致；文档间链接一律为相对路径，移动文件时需同步更新。
+
 ## 1. 文档信息
 
 | 项目 | 内容 |
 |---|---|
 | 文档名称 | A股量化选股系统设计文档 |
-| 版本号 | v0.1 |
+| 版本号 | v0.4 |
 | 状态 | 草稿（Draft） |
 | 创建日期 | 2026-08-08 |
 | 最后更新 | 2026-08-08 |
@@ -16,61 +18,125 @@
 | 版本 | 日期 | 变更说明 | 作者 |
 |---|---|---|---|
 | v0.1 | 2026-08-08 | 初始版本：确定整体架构、技术选型、双策略规则、数据库 Schema、API 设计、部署方案 | 待填写 |
+| v0.2 | 2026-08-08 | 生产健壮性优化：JWT 严格黑名单吊销、Redis 锁 Lua 原子释放、策略逐股流式处理、recommendations 索引优化、Celery 迁移路径修正、API 限流、交易日判断、可观测性 | 待填写 |
+| v0.3 | 2026-08-08 | 新增模块三（用户个性化投顾）：user_positions/user_preferences/user_personal_advice 三表、recommendations 增加 close 列、/recommendations/global 与 /personal 路由、持仓/偏好管理接口、refresh 防重放、限流 XFF 信任、前端双 Tab | 待填写 |
+| v0.4 | 2026-08-08 | 文档重构：正文精简为 §1-§7，详细规范拆分为 `docs/appendices/` 分层附录（database/api/pipeline/frontend/deployment/structure/risks/turtle），原 agent_instruction.md 内容并入 §6 与相关附录并删除该文件，附录以相对路径索引 | 待填写 |
 
 > **版本变更规范**：每当文档发生实质性变更（新增/修改模块、调整架构、变更技术选型），必须在上述表格追加一行，记录版本号、日期、变更摘要与作者。版本号遵循语义化版本（主版本.次版本.修订号）。
+
+### 附录索引
+
+```
+docs/
+├── design.md               # 本文档（主文档）
+└── appendices/
+    ├── database/           # 附录 · 数据库
+    │   ├── schema/         #   表结构
+    │   │   ├── users.md
+    │   │   ├── stocks.md
+    │   │   ├── market-data.md        # daily_bars + strategy_runs
+    │   │   ├── recommendations.md
+    │   │   └── personal.md           # user_positions / user_preferences / user_personal_advice
+    │   ├── ddl.md          #   建表语句 + 命名索引
+    │   └── write-strategy.md         #   写入策略（幂等 / 分表 / 存储成本）
+    ├── api/                # 附录 · API 规范
+    │   ├── auth/
+    │   │   ├── jwt.md      #   令牌模型 + 严格黑名单 + 防重放
+    │   │   └── endpoints.md
+    │   ├── recommendations/
+    │   │   ├── global.md   #   查询参数 + 响应示例
+    │   │   └── personal.md #   排序 SQL + 响应示例
+    │   ├── stocks.md       #   stocks/search、stocks/{code}/bars
+    │   ├── user-data.md    #   positions / preferences / strategies / health
+    │   └── rate-limiting.md        #   限流 + XFF 信任
+    ├── pipeline/           # 附录 · 调度流水线
+    │   ├── overview.md     #   0-9 步时序 + 职责边界
+    │   ├── distributed-lock.md     #   Lua 原子释放
+    │   └── failure-handling.md     #   失败处理与重试
+    ├── frontend/           # 附录 · 前端
+    │   ├── pages.md        #   页面结构与双 Tab
+    │   ├── state.md        #   Zustand/SWR + refreshAttempted 防死循环
+    │   └── charts.md       #   图表预留
+    ├── deployment/         # 附录 · 部署
+    │   ├── topology.md     #   服务拓扑
+    │   ├── environment.md  #   环境变量清单
+    │   ├── startup.md      #   启动流程
+    │   ├── seed.md         #   种子脚本
+    │   └── observability.md       #   可观测性
+    ├── structure/
+    │   └── tree.md         #   项目目录树
+    ├── risks/
+    │   └── register.md     #   风险登记表
+    └── turtle/             # 附录 · 策略参考（海龟交易法则）
+        ├── overview.md     #   起源 / 哲学
+        ├── indicators.md   #   N值(ATR) / 唐奇安通道
+        ├── rules.md        #   入场 / 加仓 / 止损 / 离市
+        ├── position-sizing.md
+        ├── summary-adaptation.md   # 总结 / A股适用性
+        ├── quick-reference.md      # 参数速查 / 实盘注意事项
+        └── code.md         #   核心代码实现
+```
 
 ---
 
 ## 2. 项目概述
 
-**目标**：构建一套 A 股日线量化选股系统。每日自动获取全市场 A 股日线数据，运行多策略引擎（海龟交易、布林带均值回归）产生股票推荐评分，通过 Web 应用（浏览器访问）向登录用户展示推荐列表。
+**目标**：构建一套 A 股日线量化选股系统。每日自动获取全市场 A 股日线数据，运行多策略引擎（海龟交易、布林带均值回归）产生全局股票推荐评分，并为 1 万独立注册用户生成个性化投资建议（结合其持仓、总资金与风险偏好），通过 Web 应用（浏览器访问）向登录用户展示。
 
-**系统边界**：
+**系统边界**（三大模块）：
 
-- 模块一（后端）：数据获取 → 策略计算 → JSON 输出
-- 模块二（前端）：接收 JSON → App 展示
+- 模块一（数据工厂）：A 股数据获取（akshare 主 + efinance 备），适配器模式，`market` 参数当前支持 SH/SZ/BJ（预留 HK/US）。
+- 模块二（全局公共推荐）：每日定时运行双策略，产出全市场 5000+ 只股票的 BUY/HOLD/AVOID 信号，结果对所有用户一致。
+- 模块三（用户个性化投顾）：针对每个用户，结合已持仓 + 总资金 + 风险偏好，生成专属 BUY/SELL/HOLD 建议（含建议股数）。
 
 **第一期范围**：
 - 每日定时全市场数据获取（akshare 主 + efinance 备用）
 - 双策略引擎（海龟 / 布林带均值回归）
-- FastAPI 提供 REST API（JWT 认证）
-- Next.js Web 应用：登录页 + 推荐列表页（表格展示）
+- 用户个性化投顾引擎（模块三）
+- FastAPI 提供 REST API（JWT 认证 + 限流）
+- Next.js Web 应用：登录页 + 推荐列表页（全局/我的双 Tab + 持仓/偏好管理入口）
 - Docker Compose + Nginx 部署
 
-**非目标（本期不做）**：分钟线/实时行情、个股 K 线详情页（二期）、自选股、移动端、Celery 分布式任务队列。
+**非目标（本期不做）**：分钟线/实时行情、个股 K 线详情页（二期）、自选股社区、移动端、Celery 分布式任务队列、港股美股行情接入。
 
 ---
 
 ## 3. 系统架构
 
 ```
-┌─────────────────────────────── 模块一：后端 ───────────────────────────────┐
-│                                                                            │
-│  [APScheduler 定时任务]                                                    │
-│         │ 17:00 触发，Redis SET NX 分布式锁                                 │
-│         ▼                                                                  │
-│  [数据获取层]  akshare(主) → efinance(备) 自动降级                           │
-│         │  全 A 股日线                                                     │
-│         ▼                                                                  │
-│  [数据存储]  PostgreSQL (daily_bars / stocks / strategy_runs)              │
-│         │                                                                  │
-│         ▼                                                                  │
-│  [策略引擎]  Pandas + NumPy  海龟策略 / 布林带均值回归                       │
-│         │                                                                  │
-│         ▼                                                                  │
-│  [FastAPI 接口层]  /api/recommendations 等，JWT 认证                        │
-└────────────┬───────────────────────────────────────────────────────────────┘
+┌─────────────────────────────── 后端（模块一/二/三） ───────────────────────────────┐
+│                                                                                    │
+│  [APScheduler 定时任务]  17:00 触发，Redis Lua 分布式锁 + 交易日判断                  │
+│         │                                                                          │
+│         ▼                                                                          │
+│  [模块一·数据获取层]  akshare(主) → efinance(备) 自动降级，适配器模式 market=SH/SZ/BJ │
+│         │  全 A 股日线                                                             │
+│         ▼                                                                          │
+│  [数据存储]  PostgreSQL (daily_bars / stocks / strategy_runs)                       │
+│         │                                                                          │
+│         ▼                                                                          │
+│  [模块二·策略引擎]  Pandas + NumPy，逐股流式  海龟 / 布林带 → recommendations       │
+│         │                                                                          │
+│         ▼                                                                          │
+│  [模块三·个性化投顾]  user_positions + user_preferences + recommendations(close)    │
+│         │  → user_personal_advice（内存批量计算，upsert）                            │
+│         ▼                                                                          │
+│  [FastAPI 接口层]  /api/...  JWT 认证 + 限流(XFF)                                  │
+└────────────┬───────────────────────────────────────────────────────────────────────┘
              │  HTTP + JSON
              ▼
-┌────────────┴───────────────────────────────────────────────────────────────┐
-│                            模块二：前端（Web）                              │
-│                                                                            │
-│  [Next.js 14 + TypeScript + Tailwind]                                      │
-│      登录页 → JWT → 推荐列表页（策略/日期筛选、评分/信号/原因）                │
-│      （预留 ECharts 组件目录，二期接入 K 线详情）                            │
-└────────────────────────────────────────────────────────────────────────────┘
+┌────────────┴───────────────────────────────────────────────────────────────────────┐
+│                            前端（Web）                                              │
+│                                                                                    │
+│  [Next.js 14 + TypeScript + Tailwind + Zustand + SWR]                              │
+│      登录页 → JWT → 推荐列表页                                                      │
+│        ├─ 全局推荐 Tab：策略/日期/信号筛选、评分/信号/原因                            │
+│        └─ 我的建议 Tab：BUY/SELL 优先、红绿标签、建议股数                            │
+│      持仓/偏好管理入口；401 自动刷新（refreshAttempted 防死循环）                    │
+│      （预留 ECharts 组件目录，二期接入 K 线详情）                                    │
+└────────────────────────────────────────────────────────────────────────────────────┘
 
-             Nginx 反代：/ → Next.js，/api → FastAPI
+             Nginx 反代：/ → Next.js，/api → FastAPI；透传 X-Forwarded-For / X-Request-ID
 ```
 
 ---
@@ -81,32 +147,33 @@
 |---|---|---|
 | 数据源 | akshare（主）+ efinance（备） | 免费开源、东方财富/新浪/腾讯多源、社区活跃；efinance 轻量降级 |
 | 策略引擎 | Python 3.11 + Pandas + NumPy | 自建轻量引擎，逻辑清晰可控，无需重型回测框架 |
-| API 框架 | FastAPI + Pydantic | 高性能、异步、自动 Swagger 文档、原生 JSON |
-| 数据库 | PostgreSQL 16 | 数据持久化，支持索引与批写入 |
+| API 框架 | FastAPI + Pydantic + slowapi | 高性能、异步、自动 Swagger 文档、原生 JSON；slowapi 提供基于 Redis 的限流 |
+| 数据库 | PostgreSQL 16（`postgres:16-alpine`） | 数据持久化，支持索引与批写入；**本期不引入 pgvector** |
 | ORM/迁移 | SQLAlchemy 2.0 + Alembic | 类型安全、迁移可追踪 |
 | 认证 | JWT（python-jose + passlib/bcrypt） | 无状态、前后端分离友好 |
-| 调度 | APScheduler + Redis 分布式锁 | 初期最小化；见 §7 演进路径 |
-| 前端 | Next.js 14 + TypeScript + Tailwind CSS | 全栈 React、类型安全、SSR |
+| 调度 | APScheduler + Redis 分布式锁 | 初期最小化；演进路径见 §5.3 |
+| 前端 | Next.js 14 + TypeScript + Tailwind CSS + Zustand + SWR | 全栈 React、类型安全、SSR、轻量状态与请求缓存 |
 | 图表 | ECharts（预留） | K 线/技术指标行业标准 |
 | 部署 | Docker Compose + Nginx | 容器化、单机多服务编排 |
 
 ---
 
-## 5. 模块一设计（后端）
+## 5. 模块设计
 
-### 5.1 数据获取层
+### 5.1 数据工厂（模块一）
 
 - **主数据源**：akshare。获取接口：
   - 股票列表：`ak.stock_info_a_code_name()`（全 A 股代码/名称）
   - 日线：`ak.stock_zh_a_hist(symbol, period="daily", start_date, end_date, adjust="qfq")`
+  - 交易日历：`ak.tool_trade_date_hist_sina()`（交易日判断）
 - **备用数据源**：efinance。当日线获取异常时自动降级，保障可用性。
-- **降级策略**：按股票粒度重试 → 切备用源 → 记录失败清单（写入日志与 `strategy_runs` 的 note 字段），不阻断整体流程。
+- **降级策略**：按股票粒度重试 → 切备用源 → 记录失败清单（写入日志与 `strategy_runs.note`），不阻断整体流程。
 - **全市场覆盖**：约 5000+ 只股票，预计拉取耗时 10-30 分钟，接受慢速但必须全覆盖。
-- 新上市/新出现股票自动入库到 `stocks` 表；退市/停牌股票标记状态。
+- 新上市/新出现股票自动入库到 `stocks` 表；退市/停牌股票标记 `status`。
 
-### 5.2 策略引擎（自建，Pandas + NumPy）
+### 5.2 策略引擎（模块二，自建 Pandas + NumPy）
 
-统一接口约定：每个策略实现 `run(daily_bars: DataFrame) -> list[Recommendation]`，输出 `score`（0-100）、`signal`（BUY/HOLD/AVOID）、`reason`（中文原因摘要）。策略配置（参数、阈值）全部外置到 `config`。
+统一接口约定：每个策略实现 `run(daily_bars: DataFrame) -> list[Recommendation]`，输出 `score`（0-100）、`signal`（BUY/HOLD/AVOID）、`reason`（中文原因摘要）。策略以插件形式注册（`STRATEGY_REGISTRY`），新增策略只需实现统一接口并注册，不影响调度与 API 层；策略配置（参数、阈值）全部外置到 `config`。
 
 #### 策略一：海龟交易（趋势跟踪）
 
@@ -119,6 +186,8 @@
 | 评分构成 | 突破强度（价格/突破位）、趋势斜率（20 日均线方向）、量能配合（突破日成交量 / 5 日均量） |
 | 信号 | 满足突破 → BUY；持仓中未破位 → HOLD；破位 → AVOID |
 
+> 海龟法则完整理论（N 值/ATR、唐奇安通道、加仓/止损/离市规则、A 股适用性改造）见 [策略参考·海龟交易法则](appendices/turtle/overview.md)。
+
 #### 策略二：布林带均值回归（与趋势跟踪互补，覆盖震荡市）
 
 | 项目 | 规则 |
@@ -130,281 +199,66 @@
 | 评分构成 | 乖离率（下轨偏离程度）、RSI 超卖程度、缩量止跌信号（量能萎缩 + 下影线） |
 | 信号 | 触发 → BUY；回中轨 → HOLD；RSI 回升但价格走弱 → AVOID |
 
-**设计原则**：策略以插件形式注册（`STRATEGY_REGISTRY`），新增策略只需实现统一接口并注册，不影响调度与 API 层。
+**内存与性能约束**：全市场 5000+ 只股票日线累计数千万行，严禁将全表 `daily_bars` 一次性加载至 Pandas DataFrame（内存占用可达 500MB~1GB，有 OOM 风险）。策略引擎必须采用**逐股流式处理**：遍历 `stocks` 表，单次仅查询当前股票的历史 K 线序列（`ORDER BY date DESC LIMIT 500`，足够覆盖 MA(250)、ATR(60) 等指标窗口），计算指标生成推荐后立即释放该 DataFrame 对象，再处理下一只。此举可将进程内存占用恒定控制在 200MB 以内，且单股计算异常不影响其余股票。
 
-### 5.3 调度层（APScheduler + Redis 分布式锁）
+### 5.3 调度层（模块三载体 + APScheduler + Redis 分布式锁）
 
-- **触发**：每日 17:00（收盘后）Cron 触发。
-- **分布式锁**：Redis `SET lock_key run_id NX EX 7200`，获取锁成功才执行，防止多实例重复运行；执行结束或超时释放。
-- **执行入口**：`do_heavy_computation(run_id)` 为唯一重计算入口，内部依次：拉全市场数据 → 写库 → 跑策略 → 写推荐结果。
-- **演进路径（文档预留）**：当系统需要上百种定时任务、按优先级分队列时，将调度层平滑迁移至 Celery——仅把 `do_heavy_computation` 函数体改为 `send_task_to_celery.delay(run_id)`，调度层其余代码零改动。初期切莫过度设计。
+- **触发**：每日 17:00（Asia/Shanghai，收盘后）Cron 触发。
+- **分布式锁**：Redis `daily_pipeline_lock`，Value = `uuid.uuid4()`，`SET NX EX 7200`；获取锁成功才执行，防止多实例重复运行。**释放锁必须用 Lua 脚本校验 Value（run_id/uuid）匹配才删除**，禁止裸 `DEL`（否则任务超时后可能误删其他实例刚获取的新锁，导致双实例并发现象）。Lua 脚本与完整 0-9 步流水线时序见 [流水线附录](appendices/pipeline/overview.md)。
+- **执行入口**：`run_pipeline_core(run_id)` 为唯一重计算入口（**纯业务计算，不涉及 `strategy_runs` 状态更新**），内部依次：交易日判断 → 拉全市场数据 → 写库 → 跑策略 → 写推荐 → 模块三批量计算 → 状态更新由调度层在 `finally` 中完成（success/failed，记录数量/失败清单/耗时）。
+- **演进路径（避免异步状态不一致）**：核心计算逻辑已抽取为独立函数 `run_pipeline_core(run_id)`，与"执行状态管理"完全剥离：
+  - **APScheduler 阶段**：调度器同步调用 `run_pipeline_core`，在 `finally` 中更新 `strategy_runs` 状态并释放锁。
+  - **迁移 Celery 阶段**：APScheduler 仅改为 `run_pipeline_core.delay(run_id)`（异步投递）。**关键注意**：`delay()` 会瞬间返回，此时必须在 Celery Worker 内部（或 `after_return` 回调）自行更新 `strategy_runs` 状态；调度层绝不能因 `delay()` 立即返回就误判任务执行成功，否则状态会错乱为 success。
+  - 初期切莫过度设计，仅做上述结构预留。
 
----
+### 5.4 用户个性化投顾（模块三）
 
-## 6. 数据库设计
+**输入**：用户持仓（`user_positions`）+ 风险偏好/总资金（`user_preferences`）+ 当日全局推荐（`recommendations`，含 `close` 收盘价）。**输出**：`user_personal_advice`（action + suggested_shares + reason）。
 
-### 6.1 ER 概览
+**计算方式**：不得逐用户重复查库（1 万用户 × 多次查询 = 3 万+ 次 DB 往返）。一次性批量加载当日全部 `recommendations`（含 close）、全量 `user_positions`、全量 `user_preferences`，在内存中完成所有用户计算后统一写入。
 
-```
-users ──────────────►  (认证)
-stocks ◄─────────── daily_bars   (stocks.code ← daily_bars.stock_code)
-strategy_runs ──────► recommendations  (run_id 关联)
-stocks ◄─────────── recommendations  (stock_code 关联)
-```
+**建议生成规则**（按场景映射）：
 
-### 6.2 表结构
+| 场景 | 全局信号 | action | suggested_shares | 理由模板 |
+|---|---|---|---|---|
+| 已持仓 | BUY | HOLD | 加仓量 `floor(总资金 × 5% / close / 100) × 100`；< 100 则为 0 | "您已持有该股，今日出现买入信号，建议持有并可加仓 N 股" |
+| 已持仓 | HOLD | HOLD | 0 | "您已持有该股，今日信号为持有，建议继续持有" |
+| 已持仓 | AVOID | SELL | 当前持仓股数（清仓） | "您已持有该股，今日出现卖出信号，建议清仓全部 N 股" |
+| 未持仓 | BUY | BUY | 同上公式；**< 100（买不起 1 手）则跳过不生成** | "您未持有该股，今日出现买入信号，建议按资金 5% 仓位买入 N 股" |
+| 未持仓 | HOLD / AVOID | 不生成 | — | — |
 
-**users**
-| 列 | 类型 | 约束 | 说明 |
-|---|---|---|---|
-| id | BIGSERIAL | PK | |
-| username | VARCHAR(64) | UNIQUE NOT NULL | |
-| password_hash | VARCHAR(255) | NOT NULL | bcrypt |
-| created_at | TIMESTAMPTZ | NOT NULL DEFAULT now() | |
+**约束**：`total_capital` 为 NULL 或未配置偏好时不生成 BUY（已持仓场景照常生成 HOLD/SELL）；写入采用 **upsert**（按 `UNIQUE(user_id, stock_code, advice_date)` 覆盖），保证流水线重跑/重试幂等；持仓反查依赖 `idx_rec_stock (stock_code, run_date)`（见 [数据库附录](appendices/database/schema/recommendations.md)）。
 
-**stocks**
-| 列 | 类型 | 约束 | 说明 |
-|---|---|---|---|
-| code | VARCHAR(16) | PK | 如 600000.SH / 000001.SZ |
-| name | VARCHAR(64) | NOT NULL | |
-| market | VARCHAR(16) | | SH/SZ/BJ |
-| status | VARCHAR(16) | DEFAULT 'active' | active/suspended/delisted |
-| updated_at | TIMESTAMPTZ | | 最后行情时间 |
-
-**daily_bars**
-| 列 | 类型 | 约束 | 说明 |
-|---|---|---|---|
-| stock_code | VARCHAR(16) | PK(FK→stocks) | 复合主键 |
-| date | DATE | PK | 复合主键 |
-| open / high / low / close | NUMERIC(12,4) | NOT NULL | |
-| volume | NUMERIC(20,0) | NOT NULL | 手 |
-| amount | NUMERIC(20,2) | | 成交额 |
-| 索引 | | | (stock_code, date) 复合 PK 已覆盖 |
-
-**strategy_runs**
-| 列 | 类型 | 约束 | 说明 |
-|---|---|---|---|
-| id | BIGSERIAL | PK | run_id |
-| strategy | VARCHAR(32) | NOT NULL | turtle / bollinger_mean_reversion |
-| run_date | DATE | NOT NULL | |
-| status | VARCHAR(16) | DEFAULT 'pending' | pending/running/success/failed |
-| started_at / finished_at | TIMESTAMPTZ | | |
-| stock_count | INT | | 处理数量 |
-| note | TEXT | | 失败清单/错误信息 |
-| 索引 | | | (strategy, run_date) |
-
-**recommendations**
-| 列 | 类型 | 约束 | 说明 |
-|---|---|---|---|
-| id | BIGSERIAL | PK | |
-| run_id | BIGINT | FK→strategy_runs | |
-| run_date | DATE | NOT NULL | 冗余便于查询 |
-| strategy | VARCHAR(32) | NOT NULL | |
-| stock_code | VARCHAR(16) | FK→stocks | |
-| signal | VARCHAR(8) | NOT NULL | BUY/HOLD/AVOID |
-| score | NUMERIC(6,2) | NOT NULL | 0-100 |
-| reason | TEXT | | 中文原因 |
-| 索引/约束 | | | UNIQUE(run_date, strategy, stock_code)；INDEX(strategy, run_date, score desc) |
-
-### 6.3 写入策略
-- 日线批量写入用 `COPY`/`executemany`，按 `run_date` 分批。
-- `daily_bars` 全市场日增量约 5000 行/日，年增量约 125 万行，规模可控；后续可按月分区。
+**一期输入通道**：提供 `POST /positions`（upsert 本人持仓）与 `GET/PUT /preferences`（本人风险偏好/总资金）接口 + 种子脚本示例用户，保证模块三可产出可验证（见 [部署附录·seed](appendices/deployment/seed.md)）。
 
 ---
 
-## 7. API 设计
+## 6. 编码硬性约束速览
 
-Base URL：`/api`。除登录/注册/健康检查外均需 `Authorization: Bearer <token>`。
+Agent / 开发者违反以下任一条必然产生 bug，编码时必须逐条核对：
 
-| 方法 | 路径 | 说明 | 认证 |
-|---|---|---|---|
-| POST | /api/auth/register | 注册（username/password） | 否 |
-| POST | /api/auth/login | 登录，返回 access_token + refresh_token | 否 |
-| GET | /api/auth/me | 当前用户信息 | 是 |
-| GET | /api/strategies | 可用策略元信息 | 是 |
-| GET | /api/recommendations | 推荐列表，支持查询参数 | 是 |
-| GET | /api/stocks/{code}/bars | 个股日线（二期详情页使用） | 是 |
-| GET | /api/health | 健康检查（含 DB 连通性） | 否 |
-
-**GET /api/recommendations 查询参数**
-| 参数 | 类型 | 说明 |
-|---|---|---|
-| strategy | string | turtle / bollinger_mean_reversion，缺省返回全部 |
-| date | date | 指定交易日，缺省最新 |
-| signal | string | BUY/HOLD/AVOID 过滤 |
-| limit / offset | int | 分页，limit 默认 50 |
-| order_by | string | score 等，默认 score desc |
-
-**响应示例**
-```json
-{
-  "items": [
-    {
-      "stock_code": "600000.SH",
-      "stock_name": "浦发银行",
-      "strategy": "turtle",
-      "run_date": "2026-08-07",
-      "signal": "BUY",
-      "score": 82.5,
-      "reason": "收盘价突破55日高点，量能放大1.8倍，20日均线上行"
-    }
-  ],
-  "total": 1,
-  "page": 1,
-  "limit": 50
-}
-```
-
-### 认证流程
-1. 注册 → 密码 bcrypt 哈希入库。
-2. 登录 → 校验密码 → 签发 JWT（access 30 分钟 + refresh 7 天，refresh 存 Redis 黑名单/白名单）。
-3. 前端带 access token 请求；过期用 refresh token 换取新 access token。
+- **内存约束**：严禁 `SELECT * FROM daily_bars` 一次性加载全量。模块二必须**逐股流式处理**（循环股票代码，单次仅查该股最近 500 条 K 线，计算完立即释放 DataFrame），内存峰值 ≤200MB；模块三禁止逐用户查库，必须**批量加载**当日推荐 + 全量持仓/偏好到内存计算。
+- **分布式锁约束**：Redis 锁 `daily_pipeline_lock`，Value = `uuid.uuid4()`，TTL 7200s；**释放必须用 Lua 脚本**校验 Value 匹配才删除，禁止裸 `DEL`（脚本见 [分布式锁附录](appendices/pipeline/distributed-lock.md)）。
+- **JWT 严格黑名单（语义必须自洽）**：登录不存任何会话状态；**登出 = 将 jti 写入 Redis 黑名单（不是删除）**；**刷新先验签再查黑名单，存在即拒绝**，放行时轮换新 refresh 且**旧 jti 写入黑名单**（防重放）；全设备踢出靠 `ver` 声明 + `user:{id}:token_version` 递增（详见 [JWT 附录](appendices/api/auth/jwt.md)）。
+- **限流 XFF 信任**：login 按真实客户端 IP 限流（5 次/分钟）；`/recommendations/global` 与 `/recommendations/personal` 按用户限流（各 60 次/分钟）；**必须信任 Nginx 透传的 X-Forwarded-For**（详见 [限流附录](appendices/api/rate-limiting.md)）。
+- **幂等约束**：`user_personal_advice` 设 `UNIQUE(user_id, stock_code, advice_date)`、`recommendations` 设 `UNIQUE(strategy, run_date, stock_code)`，流水线重跑/重试一律 **upsert**（详见 [写入策略附录](appendices/database/write-strategy.md)）。
+- **时区约束**：所有定时任务、日期存储统一 `Asia/Shanghai`；调度触发与 `run_date` / `advice_date` 均以该时区为准。
+- **单位与命名约束**：`shares` / `suggested_shares` 单位一律为**股**；`daily_bars.volume` 单位为**手**；DDL 命名一律 `snake_case`，索引按 `idx_` 前缀（见 [DDL 附录](appendices/database/ddl.md)）。
+- **范围约束**：本期不引入 pgvector（镜像 `postgres:16-alpine`，不加 `CREATE EXTENSION`）；`market` 枚举当前仅 SH/SZ/BJ，预留 HK/US 本期不实现。
 
 ---
 
-## 8. 模块二设计（前端，Web）
-
-### 8.1 技术栈
-Next.js 14（App Router）+ TypeScript + Tailwind CSS + Zustand（轻量状态管理）+ SWR（数据请求）。
-
-### 8.2 页面结构（第一期）
-```
-/                    → 重定向 /login 或 /recommendations
-/login               → 登录页（含注册切换）
-/recommendations     → 推荐列表页（受保护）
-  ├─ 策略 Tab 切换（全部/海龟/布林均值回归）
-  ├─ 日期选择器（默认最新交易日）
-  ├─ 筛选：信号（BUY/HOLD/AVOID）
-  ├─ 排序/分页
-  └─ 表格列：代码/名称/策略/评分/信号/原因/日期
-```
-
-### 8.3 状态与请求
-- Zustand：auth store（token、user、login/logout）。
-- SWR：`/api/recommendations`、`/api/strategies` 拉取与缓存。
-- API 层统一封装 `fetch` + token 注入 + 401 自动刷新。
-
-### 8.4 图表预留
-`components/charts/` 目录预留 ECharts 封装（K 线、成交量、技术指标），二期接入个股详情页，本期不实现。
-
----
-
-## 9. 每日流水线时序
-
-```
-17:00  Cron 触发
-  │
-  ├─ 1. Redis 获取分布式锁（失败则本轮跳过，另一实例已执行）
-  ├─ 2. 创建 strategy_runs 记录（status=pending）
-  ├─ 3. 拉取全 A 股代码列表，增量更新 stocks 表
-  ├─ 4. 循环拉取日线（akshare → efinance 降级），批量写入 daily_bars
-  ├─ 5. 运行策略一（海龟）→ 写 recommendations
-  ├─ 6. 运行策略二（布林带均值回归）→ 写 recommendations
-  ├─ 7. 更新 strategy_runs（status=success，记录数量/失败清单）
-  └─ 8. 释放锁
-```
-
-失败处理：单股拉取失败不阻断（记录日志）；策略计算异常记录到 note；重试机制（同任务最多重跑 2 次）。
-
----
-
-## 10. 部署设计
-
-### 10.1 服务拓扑（docker-compose）
-```
-┌──────────────────────────────────────────────┐
-│  nginx:80  (反向代理 + 静态资源)                │
-│    /      → web (Next.js standalone)          │
-│    /api   → backend (FastAPI uvicorn)         │
-│  backend  (uvicorn 服务)                       │
-│  web      (Next.js standalone 静态服务)         │
-│  db       (postgres:16-alpine)                │
-│  redis    (redis:7-alpine)                    │
-└──────────────────────────────────────────────┘
-```
-
-### 10.2 环境变量清单
-| 变量 | 说明 |
-|---|---|
-| DATABASE_URL | postgresql+psycopg://... |
-| REDIS_URL | redis://redis:6379/0 |
-| JWT_SECRET | JWT 签名密钥 |
-| JWT_ACCESS_TTL / JWT_REFRESH_TTL | 令牌有效期 |
-| SCHEDULE_ENABLED | 是否启用 APScheduler（worker 与 API 分离时控制） |
-| TZ | Asia/Shanghai |
-
-### 10.3 启动
-- `docker compose up -d` 一键拉起全部服务。
-- `docker compose run backend alembic upgrade head` 初始化数据库。
-- 数据卷持久化 PostgreSQL 与 Redis。
-
----
-
-## 11. 项目目录结构
-
-```
-opencode_workspace/
-├── docs/
-│   └── design.md                    # 本文档
-├── backend/
-│   ├── Dockerfile
-│   ├── pyproject.toml / requirements.txt
-│   ├── alembic/                     # 数据库迁移
-│   ├── app/
-│   │   ├── main.py                  # FastAPI 入口
-│   │   ├── core/                    # 配置、安全、日志
-│   │   ├── api/                     # 路由（auth/recommendations/strategies/health）
-│   │   ├── models/                  # SQLAlchemy 模型
-│   │   ├── schemas/                 # Pydantic 模型
-│   │   ├── services/                # 业务逻辑
-│   │   │   ├── data_fetcher.py      # akshare/efinance 获取+降级
-│   │   │   ├── scheduler.py         # APScheduler + Redis 锁
-│   │   │   └── pipeline.py          # do_heavy_computation 入口
-│   │   └── strategies/              # 策略引擎
-│   │       ├── base.py              # 统一接口 + 注册表
-│   │       ├── turtle.py            # 海龟
-│   │       ├── bollinger_reversion.py  # 布林带均值回归
-│   │       └── config.py            # 策略参数外置
-│   ├── tests/
-│   └── requirements.txt
-├── web-app/
-│   ├── Dockerfile
-│   ├── package.json
-│   ├── next.config.mjs
-│   ├── src/
-│   │   ├── app/
-│   │   │   ├── login/page.tsx
-│   │   │   ├── recommendations/page.tsx
-│   │   │   └── layout.tsx
-│   │   ├── components/              # 表格、筛选、图表(预留)
-│   │   ├── stores/                  # Zustand
-│   │   ├── lib/                     # api client、types
-│   │   └── types/
-├── nginx/
-│   └── nginx.conf
-├── docker-compose.yml
-└── README.md
-```
-
----
-
-## 12. 里程碑计划
+## 7. 里程碑计划
 
 | 阶段 | 内容 | 验收标准 |
 |---|---|---|
-| M1 后端跑通 | 数据层 + 策略引擎 + 调度 + API | 手动触发流水线，全市场数据入库，双策略产出推荐，`/api/recommendations` 返回 JSON |
-| M2 前端联调 | 登录 + 推荐列表页 | 登录后展示推荐列表，筛选/排序可用 |
+| M1 后端跑通 | 模块一数据层 + 模块二策略引擎 + 模块三投顾 + 调度 + API | 手动触发流水线，全市场数据入库，双策略产出推荐，个性化建议可生成，`/api/recommendations/global` 与 `/personal` 返回 JSON |
+| M2 前端联调 | 登录 + 推荐列表页（双 Tab + 持仓/偏好入口） | 登录后展示全局推荐与个性化建议，筛选/排序可用 |
 | M3 部署 | Docker Compose + Nginx | 一键启动，Nginx 正确路由，每日定时任务自动运行 |
 | M4（二期） | 个股详情 K 线、自选股、图表增强 | 未排期 |
 
 ---
 
-## 13. 风险与待定事项
+> **执行顺序建议**：先交付 backend 骨架（模型 + 迁移 + 认证 + 锁 + 流水线 + 策略 + 投顾）并跑通，再交付前端；若单次任务量过大，按 `Step 1: 模块一 + 认证` → `Step 2: 模块二` → `Step 3: 模块三` → `Step 4: 前端` 分步补齐。
 
-| 事项 | 说明 |
-|---|---|
-| akshare 接口稳定性 | 接口偶发变动/限流，需监控与降级验证 |
-| 全市场拉取时长 | 10-30 分钟，需在 17:00 后留有足够窗口；接口速率受限时动态限速 |
-| ST/退市股 | 需持续维护股票状态过滤 |
-| 策略有效性 | 策略参数基于历史经验设定，需后续引入回测验证与参数调优（不在本期范围） |
-| Celery 迁移 | 预留演进路径，初期不过度设计（见 §5.3） |
+> 风险与待定事项登记表见 [风险附录](appendices/risks/register.md)。
