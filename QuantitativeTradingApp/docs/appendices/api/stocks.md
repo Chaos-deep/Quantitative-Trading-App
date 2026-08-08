@@ -1,0 +1,19 @@
+# 附录 · API · 股票查询
+
+> 主文档：../../design.md · 版本随 v0.4 同步
+
+## GET /api/stocks/search
+
+模糊搜索股票代码/名称。
+
+- 参数：`q`（必填）。
+- 返回：匹配的股票列表（code、name、market）。
+- 用于持仓/偏好录入时的股票存在性校验。
+
+## GET /api/stocks/{code}/bars
+
+个股日线（二期详情页使用，本期预留）。
+
+- 返回该股按日期升序的日线数据。
+
+[← 返回 design.md](../../design.md)
