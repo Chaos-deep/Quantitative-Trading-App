@@ -1,0 +1,17 @@
+# 依赖与构建产物
+node_modules/
+.next/
+out/
+.turbo/
+
+# 环境
+.env
+.env.local
+.env*.local
+
+# 其它
+.git/
+README.md
+*.log
+Dockerfile
+.dockerignore

@@ -28,6 +28,10 @@ htmlcov/
 Thumbs.db
 
 # 前端
+web-app/node_modules/
+web-app/.next/
+web-app/out/
+web-app/.env
 frontend/node_modules/
 frontend/dist/
 frontend/.angular/
