@@ -1,6 +1,6 @@
 # 附录 · 前端 · 图表预留
 
-> 主文档：../../design.md · 版本随 v0.4 同步
+> 主文档：../../design.md · 版本随 v0.5 同步
 
 `components/charts/` 目录预留 ECharts 封装：
 

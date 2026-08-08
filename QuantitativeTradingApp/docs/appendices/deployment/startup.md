@@ -1,6 +1,6 @@
 # 附录 · 部署 · 启动流程
 
-> 主文档：../../design.md · 版本随 v0.4 同步
+> 主文档：../../design.md · 版本随 v0.5 同步
 
 ```bash
 docker compose up -d                                   # 一键拉起全部服务

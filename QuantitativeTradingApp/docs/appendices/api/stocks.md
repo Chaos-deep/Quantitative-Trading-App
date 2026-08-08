@@ -1,6 +1,6 @@
 # 附录 · API · 股票查询
 
-> 主文档：../../design.md · 版本随 v0.4 同步
+> 主文档：../../design.md · 版本随 v0.5 同步
 
 ## GET /api/stocks/search
 

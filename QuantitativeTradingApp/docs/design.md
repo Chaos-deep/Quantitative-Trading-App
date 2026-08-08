@@ -1,13 +1,13 @@
 # A股量化选股系统 · 设计文档
 
-> **Agent 使用指引**：本文档为系统唯一主文档。正文 §1-§7 与附录 `appendices/database/`、`appendices/api/`、`appendices/pipeline/` 构成**最低可执行子集**（后端骨架可直接按此交付）；前端、部署、目录、风险与策略参考按需查阅对应附录。所有附录文件页眉标注「版本随 v0.4 同步」，与本主文档保持一致；文档间链接一律为相对路径，移动文件时需同步更新。
+> **Agent 使用指引**：本文档为系统唯一主文档。**交付时必须包含整个 `docs/` 目录（含全部 `docs/appendices/` 子目录）**，Agent 须按相对路径读取所有被引用的附录文件——只发送 `design.md` 单文件会导致附录缺失而无法编码。正文 §1-§7 与附录 `appendices/database/`、`appendices/api/`、`appendices/pipeline/` 构成**最低可执行子集**（后端骨架可直接按此交付）；其中三块必须严格照抄的可执行内容位于：DDL 建表语句 → `appendices/database/ddl.md`、JWT 黑名单流程 → `appendices/api/auth/jwt.md`、Redis Lua 锁脚本 → `appendices/pipeline/distributed-lock.md`；前端、部署、目录、风险与策略参考按需查阅对应附录。所有附录文件页眉标注「版本随 v0.5 同步」，与本主文档保持一致；文档间链接一律为相对路径，移动文件时需同步更新。
 
 ## 1. 文档信息
 
 | 项目 | 内容 |
 |---|---|
 | 文档名称 | A股量化选股系统设计文档 |
-| 版本号 | v0.4 |
+| 版本号 | v0.5 |
 | 状态 | 草稿（Draft） |
 | 创建日期 | 2026-08-08 |
 | 最后更新 | 2026-08-08 |
@@ -21,6 +21,7 @@
 | v0.2 | 2026-08-08 | 生产健壮性优化：JWT 严格黑名单吊销、Redis 锁 Lua 原子释放、策略逐股流式处理、recommendations 索引优化、Celery 迁移路径修正、API 限流、交易日判断、可观测性 | 待填写 |
 | v0.3 | 2026-08-08 | 新增模块三（用户个性化投顾）：user_positions/user_preferences/user_personal_advice 三表、recommendations 增加 close 列、/recommendations/global 与 /personal 路由、持仓/偏好管理接口、refresh 防重放、限流 XFF 信任、前端双 Tab | 待填写 |
 | v0.4 | 2026-08-08 | 文档重构：正文精简为 §1-§7，详细规范拆分为 `docs/appendices/` 分层附录（database/api/pipeline/frontend/deployment/structure/risks/turtle），原 agent_instruction.md 内容并入 §6 与相关附录并删除该文件，附录以相对路径索引 | 待填写 |
+| v0.5 | 2026-08-08 | 逻辑修复：统一 shares/suggested_shares 单位为"股"并强化 §6 单位约束（1 手 = 100 股）；新增模块三多策略冲突聚合规则（风险优先）；`user_personal_advice` 新增 `strategy_signals`（JSONB）字段记录每股各策略原始信号；确认打包交付 `docs/` 全目录给 Agent 并强化使用指引；JWT 刷新补齐含 `ver` 的严格检查顺序；调度层补 APScheduler misfire/coalesce + 单股重试机制 | 待填写 |
 
 > **版本变更规范**：每当文档发生实质性变更（新增/修改模块、调整架构、变更技术选型），必须在上述表格追加一行，记录版本号、日期、变更摘要与作者。版本号遵循语义化版本（主版本.次版本.修订号）。
 
@@ -210,10 +211,11 @@ docs/
   - **APScheduler 阶段**：调度器同步调用 `run_pipeline_core`，在 `finally` 中更新 `strategy_runs` 状态并释放锁。
   - **迁移 Celery 阶段**：APScheduler 仅改为 `run_pipeline_core.delay(run_id)`（异步投递）。**关键注意**：`delay()` 会瞬间返回，此时必须在 Celery Worker 内部（或 `after_return` 回调）自行更新 `strategy_runs` 状态；调度层绝不能因 `delay()` 立即返回就误判任务执行成功，否则状态会错乱为 success。
   - 初期切莫过度设计，仅做上述结构预留。
+- **重试机制（必须遵守）**：全局调度重试由 APScheduler 的 `misfire_grace_time=3600` + `coalesce=True` 处理——若 17:00 任务因锁未获取或异常中断，允许 1 小时内补跑，且多次触发合并为单次执行（防止重复入队）。任务内部（如单股拉取失败）在数据获取层按股票粒度循环重试（最多 3 次），不触发全局调度重跑；模块三写入靠 upsert 保证重试幂等。
 
 ### 5.4 用户个性化投顾（模块三）
 
-**输入**：用户持仓（`user_positions`）+ 风险偏好/总资金（`user_preferences`）+ 当日全局推荐（`recommendations`，含 `close` 收盘价）。**输出**：`user_personal_advice`（action + suggested_shares + reason）。
+**输入**：用户持仓（`user_positions`）+ 风险偏好/总资金（`user_preferences`）+ 当日全局推荐（`recommendations`，含 `close` 收盘价）。**输出**：`user_personal_advice`（action + suggested_shares + reason + strategy_signals）。
 
 **计算方式**：不得逐用户重复查库（1 万用户 × 多次查询 = 3 万+ 次 DB 往返）。一次性批量加载当日全部 `recommendations`（含 close）、全量 `user_positions`、全量 `user_preferences`，在内存中完成所有用户计算后统一写入。
 
@@ -227,6 +229,13 @@ docs/
 | 未持仓 | BUY | BUY | 同上公式；**< 100（买不起 1 手）则跳过不生成** | "您未持有该股，今日出现买入信号，建议按资金 5% 仓位买入 N 股" |
 | 未持仓 | HOLD / AVOID | 不生成 | — | — |
 
+**多策略冲突聚合规则（必须实现）**：同一 `(run_date, stock_code)` 在 `recommendations` 中可能对应多条策略记录（海龟 + 布林带）。模块三在内存批量加载当日推荐后，**先为每股生成 `strategy_signals`（数组 of 对象，逐策略记录原始 `signal`，`strategy` 用规范名 `turtle` / `bollinger_mean_reversion`，如 `[{"strategy":"turtle","signal":"BUY"},{"strategy":"bollinger_mean_reversion","signal":"AVOID"}]`，供前端展示各策略信号）**，再按以下规则聚合出唯一的"全局信号"，进入上方场景映射表：
+
+1. 若存在任一策略输出 `AVOID` → 该股全局信号统一为 `AVOID`（风险优先，保护本金）。
+2. 若不存在 `AVOID`，但存在任一策略输出 `BUY` → 全局信号为 `BUY`。
+3. 仅当全部策略输出均为 `HOLD` → 全局信号为 `HOLD`。
+4. `score` 取各策略评分的平均值（用于前端排序）；`reason` 拼接多条策略理由（格式：`"海龟：突破；布林：超卖"`）。
+
 **约束**：`total_capital` 为 NULL 或未配置偏好时不生成 BUY（已持仓场景照常生成 HOLD/SELL）；写入采用 **upsert**（按 `UNIQUE(user_id, stock_code, advice_date)` 覆盖），保证流水线重跑/重试幂等；持仓反查依赖 `idx_rec_stock (stock_code, run_date)`（见 [数据库附录](appendices/database/schema/recommendations.md)）。
 
 **一期输入通道**：提供 `POST /positions`（upsert 本人持仓）与 `GET/PUT /preferences`（本人风险偏好/总资金）接口 + 种子脚本示例用户，保证模块三可产出可验证（见 [部署附录·seed](appendices/deployment/seed.md)）。
@@ -239,11 +248,11 @@ Agent / 开发者违反以下任一条必然产生 bug，编码时必须逐条�
 
 - **内存约束**：严禁 `SELECT * FROM daily_bars` 一次性加载全量。模块二必须**逐股流式处理**（循环股票代码，单次仅查该股最近 500 条 K 线，计算完立即释放 DataFrame），内存峰值 ≤200MB；模块三禁止逐用户查库，必须**批量加载**当日推荐 + 全量持仓/偏好到内存计算。
 - **分布式锁约束**：Redis 锁 `daily_pipeline_lock`，Value = `uuid.uuid4()`，TTL 7200s；**释放必须用 Lua 脚本**校验 Value 匹配才删除，禁止裸 `DEL`（脚本见 [分布式锁附录](appendices/pipeline/distributed-lock.md)）。
-- **JWT 严格黑名单（语义必须自洽）**：登录不存任何会话状态；**登出 = 将 jti 写入 Redis 黑名单（不是删除）**；**刷新先验签再查黑名单，存在即拒绝**，放行时轮换新 refresh 且**旧 jti 写入黑名单**（防重放）；全设备踢出靠 `ver` 声明 + `user:{id}:token_version` 递增（详见 [JWT 附录](appendices/api/auth/jwt.md)）。
+- **JWT 严格黑名单（语义必须自洽）**：登录不存任何会话状态；**登出 = 将 jti 写入 Redis 黑名单（不是删除）**；**刷新必须严格按顺序执行：① 验签 → ② 解码提取 `jti` 与 `ver` → ③ 查 Redis 黑名单（`jti` 存在即拒绝）→ ④ 查 `user:{id}:token_version` 是否等于 `ver`（不等则立即拒绝，返回 401）→ ⑤ 全部通过后轮换新 token，并将旧 `jti` 写入黑名单**（顺序不可颠倒）；全设备踢出靠 `ver` 声明 + `user:{id}:token_version` 递增（详见 [JWT 附录](appendices/api/auth/jwt.md)）。
 - **限流 XFF 信任**：login 按真实客户端 IP 限流（5 次/分钟）；`/recommendations/global` 与 `/recommendations/personal` 按用户限流（各 60 次/分钟）；**必须信任 Nginx 透传的 X-Forwarded-For**（详见 [限流附录](appendices/api/rate-limiting.md)）。
 - **幂等约束**：`user_personal_advice` 设 `UNIQUE(user_id, stock_code, advice_date)`、`recommendations` 设 `UNIQUE(strategy, run_date, stock_code)`，流水线重跑/重试一律 **upsert**（详见 [写入策略附录](appendices/database/write-strategy.md)）。
 - **时区约束**：所有定时任务、日期存储统一 `Asia/Shanghai`；调度触发与 `run_date` / `advice_date` 均以该时区为准。
-- **单位与命名约束**：`shares` / `suggested_shares` 单位一律为**股**；`daily_bars.volume` 单位为**手**；DDL 命名一律 `snake_case`，索引按 `idx_` 前缀（见 [DDL 附录](appendices/database/ddl.md)）。
+- **单位与命名约束**：所有持仓/建议股数字段（`shares` / `suggested_shares`）单位一律为**股**，禁止与**手**混用（A 股 1 手 = 100 股，混用会导致清仓/加仓数量缩小 100 倍）；仅 `daily_bars.volume` 保留**手**以对齐 akshare 数据源；DDL 命名一律 `snake_case`，索引按 `idx_` 前缀（见 [DDL 附录](appendices/database/ddl.md)）。
 - **范围约束**：本期不引入 pgvector（镜像 `postgres:16-alpine`，不加 `CREATE EXTENSION`）；`market` 枚举当前仅 SH/SZ/BJ，预留 HK/US 本期不实现。
 
 ---

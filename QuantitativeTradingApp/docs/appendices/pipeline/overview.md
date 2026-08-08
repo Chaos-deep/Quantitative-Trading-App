@@ -1,6 +1,6 @@
 # 附录 · 流水线 · 每日调度时序
 
-> 主文档：../../design.md · 版本随 v0.4 同步
+> 主文档：../../design.md · 版本随 v0.5 同步
 
 ## 每日流水线（17:00 Cron 触发）
 
@@ -14,7 +14,7 @@
   ├─ 4. 模块一：循环拉取日线（akshare → efinance 降级），批量 COPY 写入 daily_bars
   ├─ 5. 模块二：逐股流式运行策略一（海龟）→ 写 recommendations（含当日 close）
   ├─ 6. 模块二：逐股流式运行策略二（布林带均值回归）→ 写 recommendations（含当日 close）
-  ├─ 7. 模块三：批量载入当日 recommendations + 全量持仓/偏好 → 内存计算 → upsert 写 user_personal_advice
+  ├─ 7. 模块三：批量载入当日 recommendations + 全量持仓/偏好 → **先按 §5.4 聚合规则合并多策略信号** → 内存计算 → upsert 写 user_personal_advice
   ├─ 8. 调度层更新 strategy_runs（status=success，记录数量/失败清单/耗时）
   └─ 9. Lua 脚本校验 run_id 后释放锁
 ```
