@@ -24,6 +24,7 @@ logger = get_logger("market_data")
 
 HISTORY_DAYS = 400  # 覆盖 MA(250) + 缓冲
 MAX_RETRY = 3
+FETCH_WORKERS = 6  # 日线并发抓取线程数（网络并行，DB 写入仍单线程）
 
 
 def _normalize_code(raw: str) -> str:
@@ -117,9 +118,13 @@ class AkshareProvider(BaseProvider):
 
     def get_daily_bars(self, symbol: str, start: date, end: date) -> pd.DataFrame:
         ak = self._ak()
-        df = ak.stock_zh_a_hist(
-            symbol=symbol,
-            period="daily",
+        code, _, market = symbol.partition(".")
+        if not market:
+            market = _market_of(_normalize_code(code))
+        tx_symbol = f"{market.lower()}{code}"
+        # 使用腾讯行情接口（stock_zh_a_hist_tx）：部分网络环境下东方财富接口不可达
+        df = ak.stock_zh_a_hist_tx(
+            symbol=tx_symbol,
             start_date=start.strftime("%Y%m%d"),
             end_date=end.strftime("%Y%m%d"),
             adjust="qfq",
@@ -201,16 +206,23 @@ class MarketDataService:
     def sync_stock_list(self) -> FetchStats:
         stats = FetchStats()
         items: list[StockInfo] | None = None
-        provider = self.primary
-        for _ in range(self.max_retry):
+        for attempt in range(self.max_retry):
             try:
-                items = provider.get_stock_list()
+                items = self.primary.get_stock_list()
                 break
             except Exception:
-                logger.warning("股票列表获取失败[%s]", provider.name, exc_info=True)
-                if provider is not self.backup:
-                    provider = self.backup
+                logger.warning(
+                    "股票列表获取失败[%s] attempt=%s", self.primary.name, attempt, exc_info=True
+                )
         if items is None:
+            # 降级：沿用数据库已有股票列表，不阻断整体流水线
+            existing = self.session.scalars(
+                select(Stock.code).where(Stock.status == "active")
+            ).all()
+            if existing:
+                logger.warning("股票列表获取失败，沿用现有 %s 只股票继续", len(existing))
+                stats.total = len(existing)
+                return stats
             raise RuntimeError("股票列表获取失败：主备数据源均不可用")
         stats.total = len(items)
 
@@ -251,38 +263,53 @@ class MarketDataService:
         raise RuntimeError(f"{code} 日线获取失败（重试 {self.max_retry} 次）")
 
     def fetch_all_daily_bars(self, target: date | None = None) -> FetchStats:
-        """拉取全市场日线并批量写入 daily_bars（幂等）。"""
+        """拉取全市场日线并批量写入 daily_bars（幂等）。
+
+        网络抓取并发执行（ThreadPoolExecutor），数据库写入保持单线程
+        （SQLAlchemy Session 非线程安全），每批 5000 行提交一次。
+        """
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
         target = target or today_shanghai()
         start = target - timedelta(days=self.history_days)
         codes = self.session.scalars(select(Stock.code).where(Stock.status == "active")).all()
         stats = FetchStats(total=len(codes))
 
-        buffer: list[dict] = []
-        for code in codes:
-            symbol = code.split(".")[0]
+        def fetch_one(code: str):
+            local = FetchStats()
             try:
-                df = self._fetch_with_degrade(code, symbol, start, target, stats)
-                rows = [
-                    {
-                        "stock_code": code,
-                        "date": row.date,
-                        "open": float(row.open),
-                        "high": float(row.high),
-                        "low": float(row.low),
-                        "close": float(row.close),
-                        "volume": int(row.volume),
-                        "amount": float(row.amount) if pd.notna(row.amount) else None,
-                    }
-                    for row in df.itertuples()
-                    if row.date <= target
-                ]
-                buffer.extend(rows)
-                stats.ok += 1
-            except Exception:
-                stats.failed.append(code)
-            if len(buffer) >= 5000:
-                self._write_bars(buffer)
-                buffer.clear()
+                df = self._fetch_with_degrade(code, code.split(".")[0], start, target, local)
+                return code, df, local, None
+            except Exception as exc:  # noqa: BLE001
+                return code, None, local, exc
+
+        buffer: list[dict] = []
+        with ThreadPoolExecutor(max_workers=FETCH_WORKERS) as pool:
+            futures = [pool.submit(fetch_one, code) for code in codes]
+            for future in as_completed(futures):
+                code, df, local, err = future.result()
+                if err is not None or df is None or df.empty:
+                    stats.failed.append(code)
+                else:
+                    stats.degraded.extend(local.degraded)
+                    stats.ok += 1
+                    buffer.extend(
+                        {
+                            "stock_code": code,
+                            "date": row.date,
+                            "open": float(row.open),
+                            "high": float(row.high),
+                            "low": float(row.low),
+                            "close": float(row.close),
+                            "volume": int(row.volume),
+                            "amount": float(row.amount) if pd.notna(row.amount) else None,
+                        }
+                        for row in df.itertuples()
+                        if row.date <= target
+                    )
+                if len(buffer) >= 5000:
+                    self._write_bars(buffer)
+                    buffer.clear()
         if buffer:
             self._write_bars(buffer)
         self.session.commit()
@@ -297,3 +324,4 @@ class MarketDataService:
             rows,
             index_elements=["stock_code", "date"],
         )
+        self.session.commit()
