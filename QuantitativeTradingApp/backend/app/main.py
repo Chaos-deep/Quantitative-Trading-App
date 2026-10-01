@@ -47,6 +47,11 @@ def create_app() -> FastAPI:
     setup_logging()
     init_engine()
 
+    if settings.jwt_secret == "CHANGE_ME_IN_PRODUCTION":
+        logger.warning(
+            "JWT_SECRET 仍为占位值，请在 .env/环境变量中配置强随机密钥（openssl rand -hex 32）"
+        )
+
     app = FastAPI(
         title=settings.app_name,
         version="0.5.0",
