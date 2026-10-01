@@ -12,7 +12,7 @@ import sys
 
 from sqlalchemy import select
 
-from app.core.database import SessionLocal, init_engine
+from app.core import database
 from app.core.security import hash_password
 from app.models import Stock, User, UserPosition, UserPreference
 from app.utils.db import upsert_rows
@@ -52,8 +52,8 @@ SEED_STOCKS = [
 
 
 def seed() -> None:
-    init_engine()
-    db = SessionLocal()
+    database.init_engine()
+    db = database.SessionLocal()
     try:
         # 1. 股票
         upsert_rows(
