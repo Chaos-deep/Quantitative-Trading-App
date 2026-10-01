@@ -16,7 +16,7 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from app.core.database import SessionLocal
+from app.core import database
 from app.services.market_data import MarketDataService, TradingCalendar
 from app.services.personal_advisor import run_personal_advisor
 from app.services.strategy_engine import run_strategies
@@ -37,7 +37,7 @@ def run_pipeline_core(
     """
     own_session = session is None
     if own_session:
-        session = SessionLocal()
+        session = database.SessionLocal()
     start = time.monotonic()
     try:
         market = MarketDataService(session)

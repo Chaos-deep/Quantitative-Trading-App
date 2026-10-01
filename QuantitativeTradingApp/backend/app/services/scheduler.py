@@ -13,7 +13,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from app.core.config import get_settings
-from app.core.database import SessionLocal
+from app.core import database
 from app.core.redis_client import acquire_lock, release_lock
 from app.models import StrategyRun
 from app.services.market_data import TradingCalendar
@@ -76,7 +76,7 @@ class PipelineScheduler:
 
         # 步骤 0：交易日判断（非交易日 → 记录并退出，不报错、不拉数据）
         if not TradingCalendar().is_trading_day(run_date):
-            db = SessionLocal()
+            db = database.SessionLocal()
             try:
                 db.add(
                     StrategyRun(
@@ -100,7 +100,7 @@ class PipelineScheduler:
             logger.info("分布式锁获取失败，本轮跳过", run_date=run_date.isoformat())
             return None
 
-        db = SessionLocal()
+        db = database.SessionLocal()
         run_ids: dict[str, int] = {}
         try:
             # 步骤 2：创建 strategy_runs（每条策略一个 run_id）
@@ -128,7 +128,7 @@ class PipelineScheduler:
                     run.stock_count = summary["stock_count"]
                     run.note = summary["note"]
             db.commit()
-            logger.info("流水线成功", run_date=run_date.isoformat(), **summary)
+            logger.info("流水线成功", **summary)
             return summary
         except Exception as e:  # noqa: BLE001
             db.rollback()
@@ -150,8 +150,10 @@ class PipelineScheduler:
 
 # 命令行手动触发：python -m app.services.scheduler
 if __name__ == "__main__":
+    from app.core.database import init_engine
     from app.utils.logging import setup_logging
 
     setup_logging()
+    init_engine()
     result = PipelineScheduler().run_once()
     print(result)
