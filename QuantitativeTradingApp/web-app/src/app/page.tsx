@@ -1,19 +1,6 @@
-'use client'
-
-import { useEffect } from 'react'
-import { useRouter } from 'next/navigation'
-
-import { useAuthStore } from '@/stores/authStore'
+import { redirect } from 'next/navigation'
 
 export default function Home() {
-  const router = useRouter()
-  const hydrated = useAuthStore((s) => s.hydrated)
-  const accessToken = useAuthStore((s) => s.accessToken)
-
-  useEffect(() => {
-    if (!hydrated) return
-    router.replace(accessToken ? '/recommendations' : '/login')
-  }, [hydrated, accessToken, router])
-
-  return null
+  // 服务端直接重定向，避免客户端 hydrate 前白屏；已登录用户会在 /login 被再导向 /recommendations
+  redirect('/login')
 }
