@@ -2,18 +2,21 @@
 
 from __future__ import annotations
 
+# 测试夹具口令（仅用于本文件，非任何环境的真实凭据）
+TEST_PASSWORD = "test-fixture-password"
+
 
 def test_register_and_login(client):
     resp = client.post(
         "/api/auth/register",
-        json={"username": "user1", "password": "secret123"},
+        json={"username": "user1", "password": TEST_PASSWORD},
     )
     assert resp.status_code == 201
     assert resp.json()["username"] == "user1"
 
     resp = client.post(
         "/api/auth/login",
-        json={"username": "user1", "password": "secret123"},
+        json={"username": "user1", "password": TEST_PASSWORD},
     )
     assert resp.status_code == 200
     body = resp.json()
@@ -22,7 +25,7 @@ def test_register_and_login(client):
 
 
 def test_register_duplicate(client):
-    payload = {"username": "dup", "password": "secret123"}
+    payload = {"username": "dup", "password": TEST_PASSWORD}
     assert client.post("/api/auth/register", json=payload).status_code == 201
     resp = client.post("/api/auth/register", json=payload)
     assert resp.status_code == 409
@@ -30,7 +33,7 @@ def test_register_duplicate(client):
 
 def test_login_wrong_password(client):
     client.post(
-        "/api/auth/register", json={"username": "bad", "password": "secret123"}
+        "/api/auth/register", json={"username": "bad", "password": TEST_PASSWORD}
     )
     resp = client.post(
         "/api/auth/login", json={"username": "bad", "password": "wrong"}

@@ -20,6 +20,9 @@ from app.main import create_app
 from app.models import Base, Stock, User, UserPreference, UserPosition
 from app.core.security import hash_password
 
+# 测试夹具口令（仅用于测试，非任何环境的真实凭据）
+TEST_FIXTURE_PASSWORD = "test-fixture-password"
+
 
 @pytest.fixture(autouse=True)
 def _fake_redis(monkeypatch):
@@ -107,7 +110,7 @@ def stock_factory(db_session):
 
 @pytest.fixture()
 def user_factory(db_session):
-    def _make(username: str = "tester", password: str = "test123"):
+    def _make(username: str = "tester", password: str = TEST_FIXTURE_PASSWORD):
         user = db_session.scalar(
             db_session.query(User).filter(User.username == username)
         )
@@ -129,7 +132,7 @@ def user_factory(db_session):
 def auth_headers(client):
     """注册 + 登录，返回带 Authorization 的请求头。"""
 
-    def _headers(username: str = "tester", password: str = "test123"):
+    def _headers(username: str = "tester", password: str = TEST_FIXTURE_PASSWORD):
         client.post(
             "/api/auth/register",
             json={"username": username, "password": password},
