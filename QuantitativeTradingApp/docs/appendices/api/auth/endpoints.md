@@ -18,7 +18,7 @@ Base URL：`/api`。除登录/注册/健康检查外均需 `Authorization: Beare
 
 请求体：
 ```json
-{ "username": "alice", "password": "secret123" }
+{ "username": "alice", "password": "<示例口令，请勿使用真实口令>" }
 ```
 
 - 密码 bcrypt 哈希后入库。
@@ -28,7 +28,7 @@ Base URL：`/api`。除登录/注册/健康检查外均需 `Authorization: Beare
 
 请求体：
 ```json
-{ "username": "alice", "password": "secret123" }
+{ "username": "alice", "password": "<示例口令，请勿使用真实口令>" }
 ```
 
 返回：
