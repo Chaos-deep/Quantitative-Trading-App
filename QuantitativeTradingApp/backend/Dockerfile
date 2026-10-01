@@ -7,12 +7,18 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /srv/app
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        curl \
+RUN set -eux; \
+    if [ -f /etc/apt/sources.list.d/debian.sources ]; then \
+        sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources; \
+    fi; \
+    if [ -f /etc/apt/sources.list ]; then \
+        sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list; \
+    fi; \
+    apt-get update && apt-get install -y --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
-RUN pip install -r requirements.txt
+RUN pip install -i https://mirrors.aliyun.com/pypi/simple/ -r requirements.txt
 
 COPY alembic.ini .
 COPY alembic ./alembic
