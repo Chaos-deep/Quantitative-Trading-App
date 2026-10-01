@@ -13,6 +13,6 @@ APScheduler>=3.10,<4.0
 pandas>=2.2,<3.0
 numpy>=1.26,<3.0
 akshare>=1.15
-efinance>=0.6.0
+efinance>=0.5.9
 structlog>=24.1,<25.0
 python-dateutil>=2.9,<3.0

@@ -21,7 +21,7 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     op.create_table(
         "users",
-        sa.Column("id", postgresql.BIGSERIAL(), primary_key=True),
+        sa.Column("id", sa.BigInteger(), primary_key=True),
         sa.Column("username", sa.String(64), nullable=False, unique=True),
         sa.Column("password_hash", sa.String(255), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")),
@@ -50,7 +50,7 @@ def upgrade() -> None:
 
     op.create_table(
         "strategy_runs",
-        sa.Column("id", postgresql.BIGSERIAL(), primary_key=True),
+        sa.Column("id", sa.BigInteger(), primary_key=True),
         sa.Column("strategy", sa.String(32), nullable=False),
         sa.Column("run_date", sa.Date(), nullable=False),
         sa.Column("status", sa.String(16), nullable=False, server_default="pending"),
@@ -63,7 +63,7 @@ def upgrade() -> None:
 
     op.create_table(
         "recommendations",
-        sa.Column("id", postgresql.BIGSERIAL(), primary_key=True),
+        sa.Column("id", sa.BigInteger(), primary_key=True),
         sa.Column("run_id", sa.BigInteger(), sa.ForeignKey("strategy_runs.id"), nullable=False),
         sa.Column("run_date", sa.Date(), nullable=False),
         sa.Column("strategy", sa.String(32), nullable=False),
@@ -79,7 +79,7 @@ def upgrade() -> None:
 
     op.create_table(
         "user_positions",
-        sa.Column("id", postgresql.BIGSERIAL(), primary_key=True),
+        sa.Column("id", sa.BigInteger(), primary_key=True),
         sa.Column("user_id", sa.BigInteger(), sa.ForeignKey("users.id"), nullable=False),
         sa.Column("stock_code", sa.String(16), sa.ForeignKey("stocks.code"), nullable=False),
         sa.Column("shares", sa.Integer(), nullable=False),
@@ -98,7 +98,7 @@ def upgrade() -> None:
 
     op.create_table(
         "user_personal_advice",
-        sa.Column("id", postgresql.BIGSERIAL(), primary_key=True),
+        sa.Column("id", sa.BigInteger(), primary_key=True),
         sa.Column("user_id", sa.BigInteger(), sa.ForeignKey("users.id"), nullable=False),
         sa.Column("stock_code", sa.String(16), sa.ForeignKey("stocks.code"), nullable=False),
         sa.Column("advice_date", sa.Date(), nullable=False),
